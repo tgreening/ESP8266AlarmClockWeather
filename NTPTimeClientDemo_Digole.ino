@@ -266,8 +266,9 @@ void setup() {
     Serial.printf("post heap size end: % u\n", ESP.getFreeHeap());
   });
   server.begin();
-  wunderground.updateConditions(WUNDERGRROUND_API_KEY, WUNDERGRROUND_LANGUAGE, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
+  yield();
   wunderground.updateForecast(WUNDERGRROUND_API_KEY, WUNDERGRROUND_LANGUAGE, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
+  yield();
   MDNS.addService("http", "tcp", 80);
   mp3Serial.begin (9600);
   Serial.println("Setting up mp3 player");
@@ -341,6 +342,7 @@ void updateNtpClient(NTPClient* ntpClient) {
   while (year() == 1970) {
     Serial.println("Updating time....");
     timeClient.updateTime();
+    yield();
     setTime(ntpClient->getEpochTime());
   }
 }
@@ -351,12 +353,15 @@ void loop() {
   if (savedDayOfWeek != weekday()) {
     Serial.println("Updating time....");
     updateNtpClient(ntpClient);
+    yield();
     postThingSpeak(1);
+    yield();
     setTodaysAlarms();
+    yield();
     Serial.printf("Current time %s \n", timeClient.getFormattedTime().c_str());
     savedDayOfWeek = weekday();
-    wunderground.updateConditions(WUNDERGRROUND_API_KEY, WUNDERGRROUND_LANGUAGE, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
     wunderground.updateForecast(WUNDERGRROUND_API_KEY, WUNDERGRROUND_LANGUAGE, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
+    yield();
   }
   showTime();
   for (int i = 0; i < alarmsToday.size(); i++) {
