@@ -16,8 +16,6 @@
 #include <ArduinoJson.h>
 #include <DFPlayer_Mini_Mp3.h>
 #include <SoftwareSerial.h>
-#define SC_W 240  //screen width in pixels
-#define SC_H 320  //screen Hight in pixels
 #define _Digole_Serial_I2C_  //To tell compiler compile the special communication only, 
 
 #include <DigoleSerial.h>
@@ -28,13 +26,10 @@ DigoleSerialDisp mydisp(&Wire, '\x27'); //I2C:Arduino UNO: SDA (data line) is on
 #define PIR_PIN 2
 #define SDC_PIN 14
 #define SDA_PIN 12
-#define SC_W 240  //screen width in pixels
-#define SC_H 320  //screen Hight in pixels
-#define Ver 40
-
 
 boolean busy = true;
 int pirState = LOW;             // we start, assuming no motion detected
+boolean offset = false;
 
 // Wunderground Settings
 const boolean IS_METRIC = false;
@@ -193,27 +188,29 @@ void setup() {
   mydisp.begin();
   // mydisp.print("uploading start screen now...(1024 bytes)");
   mydisp.setI2CAddress(0x29);  //this function only working when you connect using I2C, from 1 to 127
+  mydisp.setRotation(3);
+  delay(500);
   SPIFFS.begin();
   // display.init();
   // display.clear();
   pinMode(PIR_PIN, INPUT);
   pinMode(PIN_BUSY, INPUT);
   wifiManager.autoConnect("WeatherStationAP");
+  //mydisp.drawStr(0, 0, "Setting up Wifi.....");
   while ( WiFi.status() != WL_CONNECTED ) {
     delay ( 500 );
     Serial.print ( "." );
   }
-  timeClient.setupByIP();
-  ntpClient = timeClient.getNTPClient();
-  updateNtpClient(ntpClient);
+  //mydisp.drawStr(0, 1, "Updating Time Client....");
+  updateTimeClient();
 
   postThingSpeak(0);
   if (MDNS.begin("esp8266")) {
     Serial.println("MDNS responder started");
   }
   Serial.println("Checking alarms array...");
-  mydisp.clearScreen();
-  mydisp.drawStr(64, 10, "  Reading File...");
+  //mydisp.clearScreen();
+  //mydisp.drawStr(0, 2, "  Reading File...");
 
   readFile();
   server.on("/", HTTP_GET, []() {
@@ -266,17 +263,19 @@ void setup() {
     Serial.printf("post heap size end: % u\n", ESP.getFreeHeap());
   });
   server.begin();
-  yield();
-  wunderground.updateForecast(WUNDERGRROUND_API_KEY, WUNDERGRROUND_LANGUAGE, WUNDERGROUND_COUNTRY, WUNDERGROUND_CITY);
-  yield();
   MDNS.addService("http", "tcp", 80);
   mp3Serial.begin (9600);
-  Serial.println("Setting up mp3 player");
+ // mydisp.drawStr(0, 4, "Setting up mp3 player");
   mp3_set_serial (mp3Serial);
   // Delay is required before accessing player. From my experience it's ~1 sec
   delay(1000);
   mp3_set_volume (20);
-  mydisp.clearScreen();
+}
+
+void updateTimeClient() {
+  timeClient.setupByIP();
+  ntpClient = timeClient.getNTPClient();
+  updateNtpClient(ntpClient);
 }
 
 void updateFile(LinkedList<alarm*> alarms) {
@@ -349,13 +348,18 @@ void updateNtpClient(NTPClient* ntpClient) {
 
 void loop() {
   //  Serial.printf("loop heap size start: %u\n", ESP.getFreeHeap());
-  yield();
-  if (savedDayOfWeek != weekday()) {
+  if (hour() == 3 && !offset) {
+    offset = true;
+    updateTimeClient();
     Serial.println("Updating time....");
     updateNtpClient(ntpClient);
     yield();
+    postThingSpeak(2);
+  }
+  yield();
+  if (savedDayOfWeek != weekday()) {
+    offset = false;
     postThingSpeak(1);
-    yield();
     setTodaysAlarms();
     yield();
     Serial.printf("Current time %s \n", timeClient.getFormattedTime().c_str());
@@ -410,30 +414,65 @@ void loop() {
   }
 }
 
-void showTime() {
-  mydisp.setFont(200);
-  mydisp.setRotation(3);
-  mydisp.setPrintPos(1, 0, 0);
-  mydisp.print(timeClient.getFormattedTime().substring(0, 5));
-  mydisp.setFont(18);
-  int j = 0;
-  for (int i = 0; i < 10; i++) {
-    String day = wunderground.getForecastTitle(i).substring(0, 3);
-    day.toUpperCase();
-    mydisp.setPrintPos( i * 3, 6);
-    mydisp.print( day);
-    mydisp.setPrintPos(i * 3, 7);
-    mydisp.print( wunderground.getForecastLowTemp(i) + "|" + wunderground.getForecastHighTemp(i));
-    displayWeatherImage(j, 110, wunderground.getForecastIcon(i));
-    yield();
-    i++;
-    j += 55;
+String padInt(int value, int retLength) {
+  String padding = "00";
+  String valueString = String(value);
+  if (valueString.length() < retLength) {
+    valueString = padding.substring(0, retLength - valueString.length()) + valueString;
   }
-  mydisp.setFont(10);
-  mydisp.setPrintPos(12, 25, 0);
-  mydisp.print(WiFi.localIP().toString());
+  return valueString;
+}
 
+void showTime() {
+    Serial.println("Hour: " + hour());
+    if (hour() > 20 || hour() < 8) {
+      mydisp.backLightBrightness(66);
+    } else {
+      mydisp.backLightBrightness(90);
+    }
+    mydisp.setFont(200);
+    mydisp.setPrintPos(1, 0);
+    if (hour() > 12) {
+      mydisp.print(String(hour() - 12) + ":" + padInt(minute(), 2) );
+    } else {
+      mydisp.print(String(hour()) + ":" + padInt(minute(), 2) );
 
+    }
+    mydisp.setFont(120);
+    mydisp.setPrintPos(24, 0);
+    if (hour() > 12) {
+      mydisp.print("PM");
+    } else {
+      mydisp.print("AM");
+    }
+    //mydisp.print(timeClient.getFormattedTime().substring(0, 5));
+    mydisp.setFont(201);
+
+    String day = wunderground.getForecastTitle(0).substring(0, 3);
+    day.toUpperCase();
+    mydisp.setPrintPos(0, 4);
+    mydisp.print(day);
+    mydisp.setPrintPos(0, 5);
+    mydisp.print( wunderground.getForecastLowTemp(0) + "|" + wunderground.getForecastHighTemp(0));
+    displayWeatherImage(0, 130, wunderground.getForecastIcon(0));
+    day = wunderground.getForecastTitle(2).substring(0, 3);
+    day.toUpperCase();
+    mydisp.setPrintPos(7, 4);
+    mydisp.print(day);
+    mydisp.setPrintPos(7, 5);
+    mydisp.print( wunderground.getForecastLowTemp(2) + "|" + wunderground.getForecastHighTemp(2));
+    displayWeatherImage(120, 130, wunderground.getForecastIcon(2));
+    day = wunderground.getForecastTitle(4).substring(0, 3);
+    day.toUpperCase();
+    mydisp.setPrintPos(14, 4);
+    mydisp.print(day);
+    mydisp.setPrintPos(14, 5);
+    mydisp.print( wunderground.getForecastLowTemp(4) + "|" + wunderground.getForecastHighTemp(4));
+    displayWeatherImage(220, 130, wunderground.getForecastIcon(4));
+    yield();
+    mydisp.setFont(10);
+    mydisp.setPrintPos(40, 24);
+    mydisp.print(WiFi.localIP().toString());
 }
 
 void postThingSpeak(int postValue) {
@@ -477,24 +516,18 @@ void setTodaysAlarms() {
 }
 
 void displayWeatherImage(int x, int y, String iconText) {
-  //if (iconText == "F") mydisp.drawBitmap256(0, 110, 40, 40,chanceflurries);
-  if (iconText == "Q") mydisp.drawBitmap256(x, y, 25, 25, chancerain);
-  //if (iconText == "chancesleet") return "W";
-  //if (iconText == "chancesnow") return "V";
-  //if (iconText == "chancetstorms") return "S";
-  //if (iconText == "clear") return "B";
-  if (iconText == "Y") mydisp.drawBitmap256(x, y, 40, 40, cloudy);
-  //if (iconText == "flurries") return "F";
-  /*if (iconText == "fog") return "M";
-    if (iconText == "hazy") return "E";
-    if (iconText == "mostlycloudy") return "Y";
-    if (iconText == "mostlysunny") return "H";*/
-  if (iconText == "H") mydisp.drawBitmap256(x, y, 25, 25, partlycloudy);
-  /*if (iconText == "partlysunny") return "J";
-    if (iconText == "sleet") return "W";
-    if (iconText == "rain") return "R";
-    if (iconText == "snow") return "W";
-    if (iconText == "sunny") return "B";
-    if (iconText == "tstorms") return "0";*/
+  if (iconText == "Q") mydisp.drawBitmap256(x, y, 50, 50, chancerain);
+  if (iconText == "V") mydisp.drawBitmap256(0, 110, 40, 40, snow);
+  if (iconText == "S") mydisp.drawBitmap256(x, y, 50, 50, tstorms);
+  if (iconText == "B") mydisp.drawBitmap256(x, y, 50, 50, sunny);
+  if (iconText == "F") mydisp.drawBitmap256(0, 110, 40, 40, snow);
+  if (iconText == "M") mydisp.drawBitmap256(x, y, 50, 50, foggy);
+  if (iconText == "E") mydisp.drawBitmap256(x, y, 50, 50, foggy);
+  if (iconText == "Y") mydisp.drawBitmap256(x, y, 50, 50, cloudy);
+  if (iconText == "H") mydisp.drawBitmap256(x, y, 50, 50, partlycloudy);
+  if (iconText == "J") mydisp.drawBitmap256(x, y, 50, 50, partlycloudy);
+  if (iconText == "W") mydisp.drawBitmap256(x, y, 50, 50, sleet);
+  if (iconText == "R") mydisp.drawBitmap256(x, y, 50, 50, chancerain);
+  if (iconText == "0") mydisp.drawBitmap256(x, y, 50, 50, tstorms);
 }
 
